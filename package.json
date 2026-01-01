@@ -1,0 +1,12 @@
+{
+  "name": "chatgpt-toc-bookmarks",
+  "module": "index.ts",
+  "type": "module",
+  "license": "GPL-3.0-only",
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5.0.0"
+  }
+}
