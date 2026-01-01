@@ -19,17 +19,20 @@
     activeAnswerElement: null,
     overlay: null,
     contextTarget: null,
-    selectionText: ''
+    selectionText: '',
+    conversationId: null
   };
 
   const dbPromise = openDatabase();
 
   function init() {
     state.overlay = createOverlay();
+    state.conversationId = getConversationId();
     scanExistingAnswers();
     observeAnswers();
     document.addEventListener('contextmenu', captureContextInfo, true);
     document.addEventListener('selectionchange', handleSelectionChange);
+    setupNavigationListeners();
     setupRuntimeListeners();
   }
 
@@ -53,6 +56,11 @@
     }
     state.selectionText = selection.toString().trim();
     state.contextTarget = findBookmarkableElement(event.target) || findSelectionElement(selection);
+    const answerEl = findAnswerElement(state.contextTarget);
+    if (answerEl) {
+      const answerId = buildAnswerKey(answerEl);
+      setActiveAnswer(answerId);
+    }
   }
 
   function handleSelectionChange() {
@@ -67,6 +75,11 @@
     state.selectionText = selection.toString().trim();
     if (!state.contextTarget || !state.contextTarget.isConnected) {
       state.contextTarget = findSelectionElement(selection);
+    }
+    const answerEl = findAnswerElement(state.contextTarget);
+    if (answerEl) {
+      const answerId = buildAnswerKey(answerEl);
+      setActiveAnswer(answerId);
     }
   }
 
@@ -115,6 +128,40 @@
       });
     });
     observer.observe(document.body, { childList: true, subtree: true });
+  }
+
+  function setupNavigationListeners() {
+    const checkConversationChange = () => {
+      const currentId = getConversationId();
+      if (currentId === state.conversationId) {
+        return;
+      }
+      state.conversationId = currentId;
+      state.answers.clear();
+      state.activeAnswerId = null;
+      state.activeAnswerElement = null;
+      state.contextTarget = null;
+      state.selectionText = '';
+      scanExistingAnswers();
+      refreshOverlay();
+    };
+
+    const wrapHistory = (methodName) => {
+      const original = history[methodName];
+      if (typeof original !== 'function') {
+        return;
+      }
+      history[methodName] = function (...args) {
+        const result = original.apply(this, args);
+        checkConversationChange();
+        return result;
+      };
+    };
+
+    wrapHistory('pushState');
+    wrapHistory('replaceState');
+    window.addEventListener('popstate', checkConversationChange);
+    setInterval(checkConversationChange, 1000);
   }
 
   function matchesAnswer(element) {
