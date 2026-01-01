@@ -5,7 +5,7 @@
   window.__chatgptTocInjected = true;
 
   const DB_NAME = 'chatgpt_toc';
-  const DB_VERSION = 2;
+  const DB_VERSION = 3;
   const STORE_NAME = 'bookmarks';
   const ANSWER_SELECTORS = [
     '[data-message-author-role="assistant"]',
@@ -66,7 +66,7 @@
     state.contextTarget = findBookmarkableElement(event.target) || findSelectionElement(selection);
     const answerEl = findAnswerElement(state.contextTarget);
     if (answerEl) {
-      const answerId = buildAnswerKey(answerEl);
+      const answerId = buildAnswerKey();
       setActiveAnswer(answerId);
     }
   }
@@ -86,7 +86,7 @@
     }
     const answerEl = findAnswerElement(state.contextTarget);
     if (answerEl) {
-      const answerId = buildAnswerKey(answerEl);
+      const answerId = buildAnswerKey();
       setActiveAnswer(answerId);
     }
   }
@@ -177,7 +177,7 @@
   }
 
   function registerAnswer(answerEl) {
-    const answerKey = buildAnswerKey(answerEl);
+    const answerKey = buildAnswerKey();
     if (!answerKey || state.answers.has(answerKey)) {
       return;
     }
@@ -214,23 +214,66 @@
     if (!answerEl) {
       return null;
     }
+    if (answerEl.dataset.tocAnswerId) {
+      return answerEl.dataset.tocAnswerId;
+    }
     const existing = answerEl.getAttribute('data-message-id');
     if (existing) {
+      answerEl.dataset.tocAnswerId = existing;
       return existing;
     }
-    if (!answerEl.dataset.tocAnswerId) {
-      answerEl.dataset.tocAnswerId = `toc-${crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(16)}`;
+    if (answerEl.id) {
+      answerEl.dataset.tocAnswerId = answerEl.id;
+      return answerEl.id;
     }
-    return answerEl.dataset.tocAnswerId;
+    const indexId = getAnswerIndexId(answerEl);
+    if (indexId) {
+      answerEl.dataset.tocAnswerId = indexId;
+      return indexId;
+    }
+    const stableId = computeStableAnswerId(answerEl);
+    if (stableId) {
+      answerEl.dataset.tocAnswerId = stableId;
+      return stableId;
+    }
+    return null;
   }
 
-  function buildAnswerKey(answerEl) {
+  function buildAnswerKey() {
     const conversationId = getConversationId();
-    const localId = ensureAnswerLocalId(answerEl);
-    if (!localId) {
+    return conversationId;
+  }
+
+  function getAnswerIdCandidates() {
+    const conversationId = getConversationId();
+    return conversationId;
+  }
+
+  function computeStableAnswerId(answerEl) {
+    const text = (answerEl.innerText || answerEl.textContent || '').replace(/\s+/g, ' ').trim();
+    if (!text) {
       return null;
     }
-    return conversationId ? `${conversationId}::${localId}` : localId;
+    return `hash-${hashString(text)}`;
+  }
+
+  function hashString(text) {
+    let hash = 5381;
+    for (let i = 0; i < text.length; i++) {
+      hash = ((hash << 5) + hash) ^ text.charCodeAt(i);
+    }
+    return (hash >>> 0).toString(16);
+  }
+
+  function getAnswerIndex(answerEl) {
+    const selector = ANSWER_SELECTORS.join(',');
+    const answers = Array.from(document.querySelectorAll(selector));
+    return answers.indexOf(answerEl);
+  }
+
+  function getAnswerIndexId(answerEl) {
+    const answerIndex = getAnswerIndex(answerEl);
+    return answerIndex >= 0 ? `idx-${answerIndex}` : null;
   }
 
   function createOverlay() {
@@ -285,14 +328,15 @@
       return;
     }
     overlay.listEl.innerHTML = '';
-    const answerId = state.activeAnswerId;
+    const answerId = buildAnswerKey();
     if (!answerId) {
       overlay.emptyEl.textContent = 'Select an answer to view bookmarks';
       overlay.emptyEl.style.display = 'block';
       return;
     }
     const currentId = answerId;
-    const bookmarks = await getBookmarks(answerId);
+    const bookmarks = await getBookmarksForAnswer();
+    console.log('bookmarks', bookmarks);
     if (state.activeAnswerId !== currentId) {
       return;
     }
@@ -400,7 +444,7 @@
       alert('Could not find the answer section for this bookmark.');
       return;
     }
-    const answerId = buildAnswerKey(answerEl);
+    const answerId = buildAnswerKey();
     if (!answerId) {
       alert('Could not determine the answer for this bookmark.');
       return;
@@ -533,6 +577,21 @@
       request.onsuccess = () => resolve(request.result || []);
       request.onerror = () => reject(request.error);
     });
+  }
+
+  async function getBookmarksForAnswer() {
+    const candidate = getAnswerIdCandidates();
+    const results = await getBookmarks(candidate);
+    const merged = [];
+    const seen = new Set();
+    results.flat().forEach((bookmark) => {
+      if (seen.has(bookmark.id)) {
+        return;
+      }
+      seen.add(bookmark.id);
+      merged.push(bookmark);
+    });
+    return merged;
   }
 
   async function deleteBookmark(id) {
