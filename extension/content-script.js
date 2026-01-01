@@ -5,7 +5,7 @@
   window.__chatgptTocInjected = true;
 
   const DB_NAME = 'chatgpt_toc';
-  const DB_VERSION = 3;
+  const DB_VERSION = 4;
   const STORE_NAME = 'bookmarks';
   const ANSWER_SELECTORS = [
     '[data-message-author-role="assistant"]',
@@ -15,8 +15,6 @@
 
   const state = {
     answers: new Map(),
-    activeAnswerId: null,
-    activeAnswerElement: null,
     overlay: null,
     contextTarget: null,
     selectionText: '',
@@ -64,11 +62,6 @@
     }
     state.selectionText = selection.toString().trim();
     state.contextTarget = findBookmarkableElement(event.target) || findSelectionElement(selection);
-    const answerEl = findAnswerElement(state.contextTarget);
-    if (answerEl) {
-      const answerId = buildAnswerKey();
-      setActiveAnswer(answerId);
-    }
   }
 
   function handleSelectionChange() {
@@ -83,11 +76,6 @@
     state.selectionText = selection.toString().trim();
     if (!state.contextTarget || !state.contextTarget.isConnected) {
       state.contextTarget = findSelectionElement(selection);
-    }
-    const answerEl = findAnswerElement(state.contextTarget);
-    if (answerEl) {
-      const answerId = buildAnswerKey();
-      setActiveAnswer(answerId);
     }
   }
 
@@ -146,8 +134,6 @@
       }
       state.conversationId = currentId;
       state.answers.clear();
-      state.activeAnswerId = null;
-      state.activeAnswerElement = null;
       state.contextTarget = null;
       state.selectionText = '';
       scanExistingAnswers();
@@ -177,27 +163,11 @@
   }
 
   function registerAnswer(answerEl) {
-    const answerKey = buildAnswerKey();
-    if (!answerKey || state.answers.has(answerKey)) {
+    if (!answerEl || state.answers.has(answerEl)) {
       return;
     }
 
-    state.answers.set(answerKey, answerEl);
-    answerEl.addEventListener('pointerdown', () => setActiveAnswer(answerKey));
-    answerEl.addEventListener('focusin', () => setActiveAnswer(answerKey));
-
-    if (!state.activeAnswerId || isNewerAnswer(answerEl)) {
-      setActiveAnswer(answerKey);
-    }
-  }
-
-  function isNewerAnswer(candidate) {
-    if (!state.activeAnswerElement) {
-      return true;
-    }
-    return Boolean(
-      state.activeAnswerElement.compareDocumentPosition(candidate) & Node.DOCUMENT_POSITION_FOLLOWING
-    );
+    state.answers.set(answerEl, true);
   }
 
   function getConversationId() {
@@ -208,72 +178,6 @@
     }
     const segments = path.split('/').filter(Boolean);
     return segments[segments.length - 1] || null;
-  }
-
-  function ensureAnswerLocalId(answerEl) {
-    if (!answerEl) {
-      return null;
-    }
-    if (answerEl.dataset.tocAnswerId) {
-      return answerEl.dataset.tocAnswerId;
-    }
-    const existing = answerEl.getAttribute('data-message-id');
-    if (existing) {
-      answerEl.dataset.tocAnswerId = existing;
-      return existing;
-    }
-    if (answerEl.id) {
-      answerEl.dataset.tocAnswerId = answerEl.id;
-      return answerEl.id;
-    }
-    const indexId = getAnswerIndexId(answerEl);
-    if (indexId) {
-      answerEl.dataset.tocAnswerId = indexId;
-      return indexId;
-    }
-    const stableId = computeStableAnswerId(answerEl);
-    if (stableId) {
-      answerEl.dataset.tocAnswerId = stableId;
-      return stableId;
-    }
-    return null;
-  }
-
-  function buildAnswerKey() {
-    const conversationId = getConversationId();
-    return conversationId;
-  }
-
-  function getAnswerIdCandidates() {
-    const conversationId = getConversationId();
-    return conversationId;
-  }
-
-  function computeStableAnswerId(answerEl) {
-    const text = (answerEl.innerText || answerEl.textContent || '').replace(/\s+/g, ' ').trim();
-    if (!text) {
-      return null;
-    }
-    return `hash-${hashString(text)}`;
-  }
-
-  function hashString(text) {
-    let hash = 5381;
-    for (let i = 0; i < text.length; i++) {
-      hash = ((hash << 5) + hash) ^ text.charCodeAt(i);
-    }
-    return (hash >>> 0).toString(16);
-  }
-
-  function getAnswerIndex(answerEl) {
-    const selector = ANSWER_SELECTORS.join(',');
-    const answers = Array.from(document.querySelectorAll(selector));
-    return answers.indexOf(answerEl);
-  }
-
-  function getAnswerIndexId(answerEl) {
-    const answerIndex = getAnswerIndex(answerEl);
-    return answerIndex >= 0 ? `idx-${answerIndex}` : null;
   }
 
   function createOverlay() {
@@ -328,18 +232,13 @@
       return;
     }
     overlay.listEl.innerHTML = '';
-    const answerId = buildAnswerKey();
-    if (!answerId) {
-      overlay.emptyEl.textContent = 'Select an answer to view bookmarks';
+    const conversationId = state.conversationId;
+    if (!conversationId) {
+      overlay.emptyEl.textContent = 'Open a conversation to view bookmarks';
       overlay.emptyEl.style.display = 'block';
       return;
     }
-    const currentId = answerId;
-    const bookmarks = await getBookmarksForAnswer();
-    console.log('bookmarks', bookmarks);
-    if (state.activeAnswerId !== currentId) {
-      return;
-    }
+    const bookmarks = await getBookmarksForConversation(conversationId);
     overlay.emptyEl.textContent = 'No bookmarks yet';
     if (!bookmarks.length) {
       overlay.emptyEl.style.display = 'block';
@@ -397,19 +296,6 @@
       });
   }
 
-  function setActiveAnswer(answerId) {
-    if (!answerId || state.activeAnswerId === answerId) {
-      return;
-    }
-    const answerEl = state.answers.get(answerId);
-    if (!answerEl) {
-      return;
-    }
-    state.activeAnswerId = answerId;
-    state.activeAnswerElement = answerEl;
-    refreshOverlay();
-  }
-
   function scrollToBookmark(bookmark) {
     const selector = `[data-start=\"${bookmark.dataStart}\"][data-end=\"${bookmark.dataEnd}\"]`;
     const target = document.querySelector(selector);
@@ -444,9 +330,9 @@
       alert('Could not find the answer section for this bookmark.');
       return;
     }
-    const answerId = buildAnswerKey();
-    if (!answerId) {
-      alert('Could not determine the answer for this bookmark.');
+    const conversationId = getConversationId();
+    if (!conversationId) {
+      alert('Could not determine the conversation for this bookmark.');
       return;
     }
     const dataStart = target.getAttribute('data-start');
@@ -471,8 +357,8 @@
     }
     const bookmark = {
       id: generateBookmarkId(),
-      answerId,
-      conversationId: getConversationId(),
+      answerId: conversationId,
+      conversationId,
       name,
       summary: selectionText || defaultName,
       tagName: target.tagName.toLowerCase(),
@@ -481,7 +367,6 @@
       createdAt: Date.now()
     };
     await addBookmark(bookmark);
-    setActiveAnswer(answerId);
     await refreshOverlay();
   }
 
@@ -513,7 +398,7 @@
       const request = indexedDB.open(DB_NAME, DB_VERSION);
       request.onerror = () => reject(request.error);
       request.onsuccess = () => resolve(request.result);
-      request.onupgradeneeded = () => {
+      request.onupgradeneeded = (event) => {
         const db = request.result;
         const tx = request.transaction;
         if (!tx) {
@@ -529,6 +414,20 @@
         if (existingStore.keyPath === 'id') {
           if (!existingStore.indexNames.contains('answerId')) {
             existingStore.createIndex('answerId', 'answerId', { unique: false });
+          }
+          if (event.oldVersion < 4) {
+            existingStore.openCursor().onsuccess = (cursorEvent) => {
+              const cursor = cursorEvent.target.result;
+              if (!cursor) {
+                return;
+              }
+              const value = cursor.value;
+              if (value?.conversationId && value.answerId !== value.conversationId) {
+                value.answerId = value.conversationId;
+                cursor.update(value);
+              }
+              cursor.continue();
+            };
           }
           return;
         }
@@ -579,19 +478,8 @@
     });
   }
 
-  async function getBookmarksForAnswer() {
-    const candidate = getAnswerIdCandidates();
-    const results = await getBookmarks(candidate);
-    const merged = [];
-    const seen = new Set();
-    results.flat().forEach((bookmark) => {
-      if (seen.has(bookmark.id)) {
-        return;
-      }
-      seen.add(bookmark.id);
-      merged.push(bookmark);
-    });
-    return merged;
+  async function getBookmarksForConversation(conversationId) {
+    return getBookmarks(conversationId);
   }
 
   async function deleteBookmark(id) {
