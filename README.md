@@ -1,6 +1,8 @@
 # ChatGPT Answer TOC Bookmarks
 
-Save table-of-contents bookmarks for ChatGPT answers and jump back instantly. This repo also includes a Bun-based server entry point for future plugin-related APIs.
+Save table-of-contents bookmarks for ChatGPT answers and jump back instantly.
+
+![ChatGPT Answer TOC Bookmarks screenshot](screenshot.png)
 
 ## Features
 - Create bookmarks from selected text via the right-click menu.
@@ -8,21 +10,11 @@ Save table-of-contents bookmarks for ChatGPT answers and jump back instantly. Th
 - Keep bookmarks locally per conversation.
 
 ## Project Structure
-- `index.ts` - Bun entry point.
 - `extension/` - Browser extension code (content scripts, background worker, assets).
 
 ## Development
-Install dependencies:
-
-```bash
-bun install
-```
-
-Run the Bun entry point:
-
-```bash
-bun run index.ts
-```
+No pre-installed runtime dependencies are required for development.
+Use the browser extension directly from the `extension/` directory.
 
 Load the extension in Chrome:
 1. Open `chrome://extensions`.
