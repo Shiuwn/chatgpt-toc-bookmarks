@@ -5,7 +5,7 @@
   window.__chatgptTocInjected = true;
 
   const DB_NAME = 'chatgpt_toc';
-  const DB_VERSION = 1;
+  const DB_VERSION = 2;
   const STORE_NAME = 'bookmarks';
   const ANSWER_SELECTORS = [
     '[data-message-author-role="assistant"]',
@@ -24,6 +24,14 @@
   };
 
   const dbPromise = openDatabase();
+  const ID_PREFIX = 'bm';
+
+  function generateBookmarkId() {
+    if (crypto.randomUUID) {
+      return crypto.randomUUID();
+    }
+    return `${ID_PREFIX}-${Date.now().toString(16)}-${Math.random().toString(16).slice(2)}`;
+  }
 
   function init() {
     state.overlay = createOverlay();
@@ -418,7 +426,7 @@
       return;
     }
     const bookmark = {
-      id: crypto.randomUUID ? crypto.randomUUID() : `bm-${Date.now()}`,
+      id: generateBookmarkId(),
       answerId,
       conversationId: getConversationId(),
       name,
@@ -463,8 +471,43 @@
       request.onsuccess = () => resolve(request.result);
       request.onupgradeneeded = () => {
         const db = request.result;
-        const store = db.createObjectStore(STORE_NAME, { keyPath: 'id' });
-        store.createIndex('answerId', 'answerId', { unique: false });
+        const tx = request.transaction;
+        if (!tx) {
+          return;
+        }
+        if (!db.objectStoreNames.contains(STORE_NAME)) {
+          const store = db.createObjectStore(STORE_NAME, { keyPath: 'id' });
+          store.createIndex('answerId', 'answerId', { unique: false });
+          return;
+        }
+
+        const existingStore = tx.objectStore(STORE_NAME);
+        if (existingStore.keyPath === 'id') {
+          if (!existingStore.indexNames.contains('answerId')) {
+            existingStore.createIndex('answerId', 'answerId', { unique: false });
+          }
+          return;
+        }
+
+        const legacyEntries = [];
+        existingStore.openCursor().onsuccess = (event) => {
+          const cursor = event.target.result;
+          if (cursor) {
+            legacyEntries.push(cursor.value);
+            cursor.continue();
+            return;
+          }
+
+          db.deleteObjectStore(STORE_NAME);
+          const store = db.createObjectStore(STORE_NAME, { keyPath: 'id' });
+          store.createIndex('answerId', 'answerId', { unique: false });
+          legacyEntries.forEach((entry) => {
+            if (!entry.id) {
+              entry.id = generateBookmarkId();
+            }
+            store.put(entry);
+          });
+        };
       };
     });
   }
